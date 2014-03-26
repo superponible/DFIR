@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 ------------------------------
-usn-jp.py
+parseusn.py
 
 Dave Lassalle, @superponible
 email: dave@superponible.com
@@ -132,6 +132,10 @@ def main(argv):
             ot.write('"') 
         ot.write('\n')
 
+    if args.out_format == 'body':
+        all_records = True
+        joinchar = '|'
+
     position_marker = 0
     go = True 
 
@@ -159,6 +163,9 @@ def main(argv):
                     break
                 else:
                     position_marker = position_marker + 800- gap_size
+                    # records are aligned at 0x0 or 0x8, so zero out least significant 3 bits
+                    # this is necessary if the first non-zero byte is not found at an 0x0 or 0x8 offset
+                    position_marker = position_marker & 0xfffffff8
                     continue
 
             it.seek(position_marker)
@@ -175,7 +182,7 @@ def main(argv):
                 continue
             usn_record = deflag_item(usn_record,flags)
                             
-            if (all_records or "closed" in usn_record['reason']):
+            if (all_records or "closed" in usn_record['reason'] or "old_name" in usn_record['reason']):
                 #Print in appropriate format
                 if args.out_format != 'body':
                     fields = (usn_record['time'],
@@ -189,25 +196,40 @@ def main(argv):
                               usn_record['reason'],
                               usn_record['sourceinfo'],
                              )
+                # print body file format
+                else:
+                    atime = int(usn_record['time'].strftime("%s"))
+                    mtime = int(usn_record['time'].strftime("%s"))
+                    ctime = int(usn_record['time'].strftime("%s"))
+                    etime = int(usn_record['time'].strftime("%s"))
+                    fields = ('0',
+                              usn_record['filename'],
+                              usn_record['mft_ref'],
+                              '',
+                              '0',
+                              '0',
+                              '0',
+                              atime,
+                              mtime,
+                              ctime,
+                              etime,
+                             )
+                try:
+                    if args.out_format == "csv":
+                        ot.write('"') 
+                    ot.write(joinchar.join(["{}".format(a) for a in fields]))
+                    if args.out_format == "csv":
+                        ot.write('"') 
+                    ot.write('\n')
+                    ot.flush()
+                except IOError :
                     try:
-                        if args.out_format == "csv":
-                            ot.write('"') 
-                        ot.write(joinchar.join(["{}".format(a) for a in fields]))
-                        if args.out_format == "csv":
-                            ot.write('"') 
-                        ot.write('\n')
-                        ot.flush()
-                    except IOError :
-                        try:
-                            sys.stdout.close()
-                        except IOError:
-                            pass
-                        try:
-                            sys.stderr.close()
-                        except IOError:
-                            pass
-                    # print body file format
-                    else:
+                        sys.stdout.close()
+                    except IOError:
+                        pass
+                    try:
+                        sys.stderr.close()
+                    except IOError:
                         pass
 
             usn_record = None
@@ -232,7 +254,7 @@ def main(argv):
 
 def cliargs():
     '''Parse CLI args'''
-    parser = argparse.ArgumentParser(description="usnjp.py -- USN Journal Parser")
+    parser = argparse.ArgumentParser(description="parseusn.py -- USN Journal Parser")
     parser.add_argument('-f', '--infile', required=True, action='store', dest='infilename', help='Input filename, extracted $UsnJrnl:$J')
     parser.add_argument('-m', '--mft', required=False, action='store', dest='mftfilename', help='MFT filename, doesn\'t work yet')
     parser.add_argument('-o', '--outfile', required=False, action='store', dest='outfilename', help='Output filename, default to STDOUT')
