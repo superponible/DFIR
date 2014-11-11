@@ -248,7 +248,12 @@ def main(argv):
     it.close()
     ot.close()
 
-    os.unlink("{}.tmp".format(infile))
+    # replace original sparse file USN with temp to save space since beginning of file is just NULLs
+    if args.replace:
+      os.unlink("{}".format(infile))
+      os.rename("{}.tmp".format(infile), "{}".format(infile))
+    else:
+      os.unlink("{}.tmp".format(infile))
 
     exit(0)
 
@@ -261,6 +266,7 @@ def cliargs():
     parser.add_argument('-t', '--type', required=False, action='store', dest='out_format', default="csv", choices=['csv', 'tab', 'body'], help='Output format, default to CSV')
     parser.add_argument('-a', '--all', required=False, action='store_true', dest='all_records', default=False, help='Print all records, not just closed records.')
     parser.add_argument('-l', '--long', required=False, action='store_true', dest='long_flags', default=False, help='Print long strings for the file attribute flgas.')
+    parser.add_argument('-r', '--replace', required=False, action='store_true', dest='replace', default=False, help='Replace original file with temp file (removes NULLs in sparse file).')
     args = parser.parse_args()
     return args
 
