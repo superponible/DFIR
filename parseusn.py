@@ -106,11 +106,16 @@ def main(argv):
     args = cliargs()
     infile = args.infilename
     outfile = args.outfilename
+    mftfilename = args.mftfilename
     all_records = args.all_records
     flags = FLAGS_SHORT
     if args.long_flags == True:
         flags = FLAGS_LONG
     
+    mft_to_path = {}
+    if mftfilename:
+        mft_to_path = parse_mft(mftfilename)
+
     create_temp_file(infile)
     
     it = file("{}.tmp".format(infile),'rb')
@@ -184,6 +189,9 @@ def main(argv):
                             
             if (all_records or "closed" in usn_record['reason'] or "old_name" in usn_record['reason']):
                 #Print in appropriate format
+                filename = usn_record['filename']
+                if mftfilename:
+                    filename = mft_to_path[usn_record['parent_ref']] + "\\" + filename
                 if args.out_format != 'body':
                     fields = (usn_record['time'],
                               usn_record['mft_ref'],
@@ -191,7 +199,7 @@ def main(argv):
                               usn_record['parent_ref'],
                               usn_record['parent_ref_seq'],
                               usn_record['usn'],
-                              usn_record['filename'],
+                              filename,
                               usn_record['file_attrib'],
                               usn_record['reason'],
                               usn_record['sourceinfo'],
@@ -203,7 +211,7 @@ def main(argv):
                     ctime = int(usn_record['time'].strftime("%s"))
                     etime = int(usn_record['time'].strftime("%s"))
                     fields = ('0',
-                              usn_record['filename'],
+                              filename,
                               usn_record['mft_ref'],
                               '',
                               '0',
@@ -261,7 +269,7 @@ def cliargs():
     '''Parse CLI args'''
     parser = argparse.ArgumentParser(description="parseusn.py -- USN Journal Parser")
     parser.add_argument('-f', '--infile', required=True, action='store', dest='infilename', help='Input filename, extracted $UsnJrnl:$J')
-    parser.add_argument('-m', '--mft', required=False, action='store', dest='mftfilename', help='MFT filename, doesn\'t work yet')
+    parser.add_argument('-m', '--mft', required=False, action='store', dest='mftfilename', help='MFT filename, for getting the full path')
     parser.add_argument('-o', '--outfile', required=False, action='store', dest='outfilename', help='Output filename, default to STDOUT')
     parser.add_argument('-t', '--type', required=False, action='store', dest='out_format', default="csv", choices=['csv', 'tab', 'body'], help='Output format, default to CSV')
     parser.add_argument('-a', '--all', required=False, action='store_true', dest='all_records', default=False, help='Print all records, not just closed records.')
@@ -296,6 +304,88 @@ def create_temp_file(infile):
     it.close()
     ot.close()
     data = ''
+
+def parse_mft(mftfile):
+    '''Get a mapping for MFTNUMBER:PATH to display full path in output'''
+    mft_to_name = {}
+    mft_to_parent = {}
+    mft_to_path = {}
+    # open the MFT and read one a 1K record at a time until the end
+    it = file(mftfile, 'rb')
+    while(True):
+        data = it.read(1024)
+        if len(data) <= 0:
+            break
+        if data[0:5] != 'FILE0':
+            continue
+        mftnum = struct.unpack("i",data[44:48])[0]
+        # find the start of the first attribute field then get its type
+        attrib_start = struct.unpack("h",data[20:22])[0]
+        attrib_type = struct.unpack("i",data[attrib_start:attrib_start+4])[0]
+        name = ""
+        parent = -1
+        # loop until attribute type is 0xffffffff
+        while attrib_type != -1:
+            # only care about filename attributes (0x30)
+            if attrib_type == 48:
+                # step through filename attribute fields and get parent MFT number, filename length, and filename
+                stream_length = 2 * struct.unpack("B",data[attrib_start+9])[0]
+                parent_start = attrib_start + 24 + int(stream_length)
+                parent = struct.unpack("i",data[parent_start:parent_start+4])[0]
+                name_length_start = parent_start + 64
+                name_length = int(struct.unpack("b",data[name_length_start])[0])
+                name_start = name_length_start + 2
+                # unicodeHack for MFT names taken from analyzeMFT.py
+                name = ''
+                for i in range(name_start, name_start + name_length*2):
+                    if data[i] != '\x00':                         # Just skip over nulls
+                        if data[i] > '\x1F' and data[i] < '\x80':          # If it is printable, add it to the string
+                            name = name + data[i]
+                        else:
+                            name = "%s0x%02s" % (name, data[i].encode("hex"))
+            # go to the next attribute and get its type, then loop
+            attrib_length = struct.unpack("h",data[attrib_start+4:attrib_start+6])[0]
+            attrib_start += attrib_length
+            attrib_type = struct.unpack("i",data[attrib_start:attrib_start+4])[0]
+        # finished looping through all the FN attributes, so set the name and parent
+        # TODO: right now this is only going to use the last FN attribute.  Usually that probably works and
+        # will get the long filename attribute.  I have seen MFT records with 3 FN attributes; not sure how
+        # those work right now.
+        mft_to_name[mftnum] = name
+        mft_to_parent[mftnum] = parent
+    # loop through all the MFT numbers and build a dictionary mapping MFT number to full file path
+    for mftnum in mft_to_parent.keys():
+        path = ""
+        num = mftnum
+        # use this so we don't repeatedly build the same path
+        first_parent = True
+        # start with the name of the file with the given MFT number
+        path = mft_to_name[mftnum]
+        while num != 5 and num != -1:
+            # get the MFT number of the parent dir
+            num = mft_to_parent[num]
+            # if parent is 5, it's in the root directory
+            if num == 5:
+                path = ".\\" + path
+                break
+            # if parent is -1, it has no parent
+            if num == -1:
+                path = "NoParent\\" + path
+                break
+            # if the parent has already been found, use that value instead of rebuilding it
+            if mft_to_path.get(num, -2) != -2 and first_parent:
+                path = mft_to_path[num] + "\\" + path
+                break
+            # first parent was not found, so we don't do that check anymore
+            first_parent = False
+            # add the parent to the beginning of the path, then loop
+            path = mft_to_name[num] + "\\" + path
+        # mft number of 5 is the root directory, for everything else, set the path
+        if mftnum == 5:
+            mft_to_path[mftnum] = '.'
+        else:
+            mft_to_path[mftnum] = path
+    return mft_to_path
 
 def deflag_item(r, flags):
     '''Replaces values where needed for each tuple, returns new
