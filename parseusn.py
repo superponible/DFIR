@@ -195,7 +195,10 @@ def main(argv):
                 # Print in appropriate format
                 filename = usn_record['filename']
                 if mftfilename:
-                    filename = mft_to_path[usn_record['parent_ref']] + "\\" + filename
+                    try:
+                        filename = mft_to_path[usn_record['parent_ref']] + "\\" + filename
+                    except KeyError:
+                        filename = "[ORPHAN]\\" + filename
                 if args.out_format == 'csv' or args.out_format == 'tab':
                     fields = (usn_record['time'],
                               usn_record['mft_ref'],
@@ -413,7 +416,11 @@ def parse_mft(mftfile):
             # first parent was not found, so we don't do that check anymore
             first_parent = False
             # add the parent to the beginning of the path, then loop
-            path = mft_to_name[num] + "\\" + path
+            try:
+                path = mft_to_name[num] + "\\" + path
+            except KeyError:
+                path = "[ORPHAN]\\" + path
+                break
         # mft number of 5 is the root directory, for everything else, set the path
         if mftnum == 5:
             mft_to_path[mftnum] = '.'
