@@ -145,6 +145,7 @@ def main(argv):
         all_records = True
         joinchar = '|'
 
+    read_length = 800
     position_marker = 0
     go = True
 
@@ -154,12 +155,12 @@ def main(argv):
             # sys.stderr.write("\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b Offset {}".format(position_marker))
 
             it.seek(position_marker, os.SEEK_SET)
-            data = it.read(800)
+            data = it.read(read_length)
             if len(data) < 60:
                 go = False
                 continue
 
-            recordsize = struct.unpack_from('i', data)[0]
+            recordsize = struct.unpack_from('I', data)[0]
 
             if (recordsize < 0):
                 go = False          # Invalid data can create an endless loop
@@ -170,12 +171,18 @@ def main(argv):
                 gap_size = len(data.lstrip('\x00'))
                 if gap_size < 1:
                     break
-                else:
-                    position_marker = position_marker + 800 - gap_size
-                    # records are aligned at 0x0 or 0x8, so zero out least significant 3 bits
-                    # this is necessary if the first non-zero byte is not found at an 0x0 or 0x8 offset
-                    position_marker = position_marker & 0xfffffff8
+                if gap_size == read_length:
+                    position_marker += 8
                     continue
+                else:
+                    if read_length - gap_size < 8:
+                        position_marker += 8
+                    else:
+                        position_marker = position_marker + 800 - gap_size
+                        # records are aligned at 0x0 or 0x8, so zero out least significant 3 bits
+                        # this is necessary if the first non-zero byte is not found at an 0x0 or 0x8 offset
+                        position_marker = position_marker & 0xfffffff8
+                        continue
 
             it.seek(position_marker)
             data = it.read(recordsize)
